@@ -160,6 +160,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           'timeAvailability': _availability,
           'preferredGroupSize': _groupSize,
         },
+        'onboardingCompleted': true,
       };
 
       debugPrint('ONBOARDING BODY: $body');
@@ -176,6 +177,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         availability: _availability,
         groupSize: _groupSize,
         bio: _bioCtrl.text.trim(),
+        onboardingCompleted: true,
       );
 
       auth.updateUser(updatedUser);

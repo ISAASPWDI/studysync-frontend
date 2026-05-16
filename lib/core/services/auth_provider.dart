@@ -46,7 +46,11 @@ class AuthProvider extends ChangeNotifier {
         u.bio!.isNotEmpty;
   }
 
-  bool get isNewUser => !isProfileComplete;
+  bool get isNewUser {
+    final result = !(_user?.onboardingCompleted ?? false);
+    debugPrint('🚦 isNewUser evaluated: $result (onboardingCompleted: ${_user?.onboardingCompleted})');
+    return result;
+  }
 
   final GoogleSignIn _googleSignIn = GoogleSignIn.instance;
   Future<void>? _initializationFuture;
@@ -74,6 +78,9 @@ class AuthProvider extends ChangeNotifier {
 
       if (valid) {
         _user = await _storage.getUser();
+        debugPrint('🔍 checkAuth - user loaded from storage');
+        debugPrint('   onboardingCompleted: ${_user?.onboardingCompleted}');
+        debugPrint('   isNewUser: $isNewUser');
         _status = AuthStatus.authenticated;
       } else {
         await _storage.clear();
@@ -232,7 +239,10 @@ class AuthProvider extends ChangeNotifier {
   void updateUser(UserModel user) {
     _user = user;
     _storage.saveUser(user);
-
+    debugPrint('🔄 updateUser called');
+    debugPrint('   onboardingCompleted: ${user.onboardingCompleted}');
+    debugPrint('   isNewUser: $isNewUser');
+    debugPrint('   isProfileComplete: $isProfileComplete');
     notifyListeners();
   }
 

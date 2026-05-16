@@ -147,11 +147,28 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     setState(() => _loading = true);
     try {
       final auth = context.read<AuthProvider>();
-      final updated = UserModel(
-        id: auth.user!.id,
+      final api = ApiService();
+
+      await api.upsertProfile({
+        'profile': {
+          'university': auth.user!.university, 
+          'faculty': auth.user!.career,
+          'semester': int.tryParse(_semester ?? ''),
+          'bio': _bioCtrl.text.trim(),
+        },
+        'skills': {
+          'technical': _skills,
+          'interests': _interests,
+        },
+        'objectives': {
+          'primary': _goals,
+          'timeAvailability': _availability,
+          'preferredGroupSize': _groupSize,
+        },
+      });
+
+      final updated = auth.user!.copyWith(
         name: _nameCtrl.text.trim(),
-        email: auth.user!.email,
-        avatarUrl: auth.user!.avatarUrl,
         university: _uniCtrl.text.trim(),
         career: _careerCtrl.text.trim(),
         semester: _semester,
@@ -163,7 +180,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         bio: _bioCtrl.text.trim(),
       );
       auth.updateUser(updated);
-      await ApiService().syncProfile();
+
+      await api.syncProfile();
+
       if (!mounted) return;
       Navigator.pop(context);
       _showToast(context, '✓ Perfil actualizado correctamente', success: true);
@@ -226,8 +245,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           children: [
             _section('Información básica', [
               _field(_nameCtrl, 'Nombre completo', Icons.person_outline),
-              _field(_uniCtrl, 'Universidad', Icons.school_outlined),
-              _field(_careerCtrl, 'Carrera', Icons.book_outlined),
+              _field(_uniCtrl, 'Universidad', Icons.school_outlined, disabled: true),
+              _field(_careerCtrl, 'Carrera', Icons.book_outlined, disabled: true),
               _dropdown('Semestre', _semester, _semesters, (v) => setState(() => _semester = v)),
               _multilineField(_bioCtrl, 'Bio / Descripción personal'),
             ]),
@@ -291,21 +310,25 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       ),
     );
   }
-
-  Widget _field(TextEditingController ctrl, String hint, IconData icon) {
+  Widget _field(TextEditingController ctrl, String hint, IconData icon, {bool disabled = false}) {
     return TextField(
       controller: ctrl,
+      enabled: !disabled,
       decoration: InputDecoration(
         hintText: hint,
-        prefixIcon:
-        Icon(icon, color: const Color(AppColors.textSecondary), size: 20),
+        prefixIcon: Icon(icon, color: const Color(AppColors.textSecondary), size: 20),
+        filled: disabled,
+        fillColor: disabled ? const Color(AppColors.surfaceGrey) : null,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: Color(AppColors.divider)),
         ),
-        contentPadding:
-        const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        disabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(AppColors.divider)),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       ),
     );
   }

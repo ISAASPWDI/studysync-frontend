@@ -15,6 +15,7 @@ class UserModel {
   final String? availability;
   final String? groupSize;
   final String? bio;
+  final bool onboardingCompleted;
 
   UserModel({
     required this.id,
@@ -31,6 +32,7 @@ class UserModel {
     this.availability,
     this.groupSize,
     this.bio,
+    this.onboardingCompleted = false,
   });
 
   UserModel copyWith({
@@ -48,6 +50,7 @@ class UserModel {
     String? availability,
     String? groupSize,
     String? bio,
+    bool? onboardingCompleted,
   }) {
     return UserModel(
       id: id ?? this.id,
@@ -64,6 +67,7 @@ class UserModel {
       availability: availability ?? this.availability,
       groupSize: groupSize ?? this.groupSize,
       bio: bio ?? this.bio,
+      onboardingCompleted: onboardingCompleted ?? this.onboardingCompleted,
     );
   }
 
@@ -116,6 +120,7 @@ class UserModel {
       groupSize:
       objectives?['preferredGroupSize'] ?? json['groupSize'],
       bio: profile?['bio'] ?? json['bio'],
+      onboardingCompleted: json['onboardingCompleted'] as bool? ?? false,
     );
   }
 
@@ -148,6 +153,7 @@ class UserModel {
     'availability': availability,
     'groupSize': groupSize,
     'bio': bio,
+    'onboardingCompleted': onboardingCompleted,
   };
 }
 

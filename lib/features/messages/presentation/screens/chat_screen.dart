@@ -12,8 +12,10 @@ class ChatScreen extends StatefulWidget {
   final String chatId;
   final String otherUserName;
   final String? otherUserAvatar;
-  final String? otherUserCareer;    // nuevo
-  final bool otherUserIsOnline;     // nuevo
+  final String? otherUserCareer;
+  final String? otherUserUniversity;
+  final String? otherUserBio;
+  final bool otherUserIsOnline;
 
   const ChatScreen({
     super.key,
@@ -21,6 +23,8 @@ class ChatScreen extends StatefulWidget {
     required this.otherUserName,
     this.otherUserAvatar,
     this.otherUserCareer,
+    this.otherUserUniversity,
+    this.otherUserBio,
     this.otherUserIsOnline = false,
   });
 
@@ -39,6 +43,9 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isTyping = false;
   Timer? _typingTimer;
 
+  // IDs de mensajes enviados localmente, para deduplicar el echo del WS
+  final Set<String> _pendingLocalIds = {};
+
   String get _myId => context.read<AuthProvider>().user?.id ?? '';
 
   @override
@@ -51,6 +58,9 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _ws.leaveChat(widget.chatId);
+    // Limpiar callbacks para no recibir eventos en otra pantalla
+    _ws.onMessage = null;
+    _ws.onTyping = null;
     _msgCtrl.dispose();
     _scrollCtrl.dispose();
     _typingTimer?.cancel();
@@ -61,6 +71,7 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final msgs = await _api.getMessages(widget.chatId);
       setState(() {
+        // La API devuelve del más viejo al más nuevo; los mostramos en ese orden
         _messages = msgs.reversed.toList();
         _loading = false;
       });
@@ -74,13 +85,37 @@ class _ChatScreenState extends State<ChatScreen> {
   void _initWs() {
     _ws.connect().then((_) {
       _ws.joinChat(widget.chatId);
+
       _ws.onMessage = (msg) {
-        if (msg.chatId == widget.chatId) {
-          setState(() => _messages.add(msg));
+        if (msg.chatId != widget.chatId) return;
+
+        // Si el mensaje viene con un senderId que es el mío y tenía
+        // un temp local pendiente, solo actualizamos el id real y
+        // descartamos el duplicado en lugar de agregar uno nuevo.
+        if (msg.senderId == _myId && _pendingLocalIds.isNotEmpty) {
+          // El WS confirma nuestro mensaje: actualizamos el tempMsg
+          setState(() {
+            final idx = _messages.indexWhere(
+                  (m) => _pendingLocalIds.contains(m.id),
+            );
+            if (idx != -1) {
+              _pendingLocalIds.remove(_messages[idx].id);
+              _messages[idx] = msg; // reemplaza temp por el real
+            } else {
+              // Por si acaso no encontramos el temp
+              _messages.add(msg);
+            }
+          });
           _scrollToBottom();
-          _markRead();
+          return;
         }
+
+        // Mensaje del otro usuario: agregarlo normalmente
+        setState(() => _messages.add(msg));
+        _scrollToBottom();
+        _markRead();
       };
+
       _ws.onTyping = (userId, isTyping) {
         if (userId != _myId) setState(() => _isTyping = isTyping);
       };
@@ -123,16 +158,23 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty) return;
     _msgCtrl.clear();
 
+    // ID temporal local único
+    final tempId = 'local_${DateTime.now().millisecondsSinceEpoch}';
+    _pendingLocalIds.add(tempId);
+
     final tempMsg = MessageModel(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      id: tempId,
       chatId: widget.chatId,
       senderId: _myId,
       content: text,
       createdAt: DateTime.now(),
       read: false,
     );
+
     setState(() => _messages.add(tempMsg));
     _scrollToBottom();
+
+    // Emitir por WS; el servidor lo devolverá con id real
     _ws.sendMessage(widget.chatId, text);
   }
 
@@ -146,8 +188,7 @@ class _ChatScreenState extends State<ChatScreen> {
         iconTheme: const IconThemeData(color: Colors.white),
         titleSpacing: 0,
         title: InkWell(
-          // Al tocar el header se podría navegar a perfil en el futuro
-          onTap: () {},
+          onTap: () => _showUserInfo(context),
           child: Row(
             children: [
               _buildAvatar(),
@@ -185,7 +226,11 @@ class _ChatScreenState extends State<ChatScreen> {
                     if (showTime)
                       _buildDateDivider(msg.createdAt),
                     _MessageBubble(
-                        message: msg, isMine: isMine),
+                      message: msg,
+                      isMine: isMine,
+                      isPending:
+                      _pendingLocalIds.contains(msg.id),
+                    ),
                   ],
                 );
               },
@@ -197,7 +242,86 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // ── Avatar con indicador online ──────────────────────────────────────────
+  // ── Toca el header → muestra info del otro usuario ───────────────────────
+  void _showUserInfo(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircleAvatar(
+              radius: 40,
+              backgroundColor: const Color(AppColors.primaryBlue),
+              backgroundImage: widget.otherUserAvatar != null
+                  ? NetworkImage(widget.otherUserAvatar!)
+                  : null,
+              child: widget.otherUserAvatar == null
+                  ? Text(
+                widget.otherUserName.isNotEmpty
+                    ? widget.otherUserName[0].toUpperCase()
+                    : '?',
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 28),
+              )
+                  : null,
+            ),
+            const SizedBox(height: 12),
+            Text(widget.otherUserName,
+                style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Color(AppColors.textPrimary))),
+            if (widget.otherUserCareer != null) ...[
+              const SizedBox(height: 4),
+              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Icon(Icons.code_rounded,
+                    size: 14, color: Color(AppColors.textSecondary)),
+                const SizedBox(width: 4),
+                Text(widget.otherUserCareer!,
+                    style: const TextStyle(
+                        color: Color(AppColors.textSecondary),
+                        fontSize: 14)),
+              ]),
+            ],
+            if (widget.otherUserUniversity != null) ...[
+              const SizedBox(height: 4),
+              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Icon(Icons.school_rounded,
+                    size: 14, color: Color(AppColors.textSecondary)),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(widget.otherUserUniversity!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          color: Color(AppColors.textSecondary),
+                          fontSize: 14)),
+                ),
+              ]),
+            ],
+            if (widget.otherUserBio != null &&
+                widget.otherUserBio!.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Divider(),
+              const SizedBox(height: 8),
+              Text(widget.otherUserBio!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      color: Color(AppColors.textSecondary),
+                      fontSize: 14)),
+            ],
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildAvatar() {
     return Stack(
       children: [
@@ -220,7 +344,6 @@ class _ChatScreenState extends State<ChatScreen> {
           )
               : null,
         ),
-        // Indicador online
         if (widget.otherUserIsOnline)
           Positioned(
             bottom: 0,
@@ -240,13 +363,12 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // ── Nombre + estado/carrera + "Escribiendo..." ───────────────────────────
   Widget _buildHeaderInfo() {
     final subtitle = _isTyping
         ? 'Escribiendo...'
         : widget.otherUserIsOnline
         ? 'En línea'
-        : widget.otherUserCareer ?? '';
+        : widget.otherUserCareer ?? widget.otherUserUniversity ?? '';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -255,10 +377,9 @@ class _ChatScreenState extends State<ChatScreen> {
         Text(
           widget.otherUserName,
           style: const TextStyle(
-            color: Colors.white,
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-          ),
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w700),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
@@ -298,37 +419,38 @@ class _ChatScreenState extends State<ChatScreen> {
                   ? widget.otherUserName[0].toUpperCase()
                   : '?',
               style: const TextStyle(
-                color: Color(AppColors.primaryBlue),
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-              ),
+                  color: Color(AppColors.primaryBlue),
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold),
             )
                 : null,
           ),
           const SizedBox(height: 14),
-          Text(
-            widget.otherUserName,
-            style: const TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w700,
-              color: Color(AppColors.textPrimary),
-            ),
-          ),
+          Text(widget.otherUserName,
+              style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: Color(AppColors.textPrimary))),
           if (widget.otherUserCareer != null) ...[
             const SizedBox(height: 4),
-            Text(
-              widget.otherUserCareer!,
-              style: const TextStyle(
-                fontSize: 13,
-                color: Color(AppColors.textSecondary),
-              ),
-            ),
+            Text(widget.otherUserCareer!,
+                style: const TextStyle(
+                    fontSize: 13,
+                    color: Color(AppColors.textSecondary))),
+          ],
+          if (widget.otherUserUniversity != null) ...[
+            const SizedBox(height: 2),
+            Text(widget.otherUserUniversity!,
+                style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(AppColors.textHint))),
           ],
           const SizedBox(height: 10),
           Text(
             '¡Di hola a ${widget.otherUserName.split(' ').first}!',
             style: const TextStyle(
-                fontSize: 15, color: Color(AppColors.textSecondary)),
+                fontSize: 15,
+                color: Color(AppColors.textSecondary)),
           ),
         ],
       ),
@@ -366,7 +488,9 @@ class _ChatScreenState extends State<ChatScreen> {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-              color: Colors.black12, blurRadius: 8, offset: Offset(0, -2))
+              color: Colors.black12,
+              blurRadius: 8,
+              offset: Offset(0, -2))
         ],
       ),
       padding: EdgeInsets.only(
@@ -419,11 +543,17 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-// ── Bubble ───────────────────────────────────────────────────────────────────
+// ── Bubble ────────────────────────────────────────────────────────────────────
 class _MessageBubble extends StatelessWidget {
   final MessageModel message;
   final bool isMine;
-  const _MessageBubble({required this.message, required this.isMine});
+  final bool isPending; // mensaje local aún no confirmado por el servidor
+
+  const _MessageBubble({
+    required this.message,
+    required this.isMine,
+    this.isPending = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -482,10 +612,19 @@ class _MessageBubble extends StatelessWidget {
                 ),
                 if (isMine) ...[
                   const SizedBox(width: 4),
+                  // Pending → reloj; enviado → done/done_all
                   Icon(
-                    message.read ? Icons.done_all : Icons.done,
+                    isPending
+                        ? Icons.access_time
+                        : message.read
+                        ? Icons.done_all
+                        : Icons.done,
                     size: 14,
-                    color: message.read ? Colors.white : Colors.white60,
+                    color: isPending
+                        ? Colors.white38
+                        : message.read
+                        ? Colors.white
+                        : Colors.white60,
                   ),
                 ],
               ],

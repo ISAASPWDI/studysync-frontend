@@ -176,15 +176,18 @@ class ApiService {
       headers: await _headers(),
     );
     final data = await _handleResponse(response);
+    print('✅ CONFIRMED MATCHES RAW: ${data}');
     final list = data['data'] ?? [];
     return (list as List).map((e) => MatchModel.fromJson(e)).toList();
   }
 
   Future<void> acceptMatch(String matchId) async {
-    await http.post(
+    final response = await http.post(
       Uri.parse('${AppConstants.baseUrl}/matches/$matchId/accept'),
       headers: await _headers(),
     );
+    print('✅ ACCEPT RESPONSE: ${response.body}'); // ← agrega esto
+    await _handleResponse(response);
   }
 
   Future<void> rejectMatch(String matchId) async {
@@ -196,9 +199,14 @@ class ApiService {
 
   // ==================== SWIPE ====================
 
-  Future<List<RecommendedUser>> getRecommendations({int limit = 10}) async {
+  Future<List<RecommendedUser>> getRecommendations({
+    int limit = 20,
+    int offset = 0,
+  }) async {
     final response = await http.get(
-      Uri.parse('${AppConstants.baseUrl}/swipe/recommendations?limit=$limit'),
+      Uri.parse(
+        '${AppConstants.baseUrl}/swipe/recommendations?limit=$limit&offset=$offset',
+      ),
       headers: await _headers(),
     );
     final data = await _handleResponse(response);

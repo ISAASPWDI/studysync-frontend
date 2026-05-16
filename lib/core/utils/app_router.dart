@@ -48,11 +48,13 @@ class AppRouter {
           builder: (context, state) {
             final extra = state.extra as Map<String, dynamic>? ?? {};
             return ChatScreen(
-              chatId:            state.pathParameters['chatId']!,
-              otherUserName:     extra['name']     as String? ?? 'Usuario',
-              otherUserAvatar:   extra['avatar']   as String?,
-              otherUserCareer:   extra['career']   as String?,
-              otherUserIsOnline: extra['isOnline'] as bool? ?? false,
+              chatId:               state.pathParameters['chatId']!,
+              otherUserName:        extra['name']        as String? ?? 'Usuario',
+              otherUserAvatar:      extra['avatar']      as String?,
+              otherUserCareer:      extra['career']      as String?,
+              otherUserUniversity:  extra['university']  as String?,   // ← nuevo
+              otherUserBio:         extra['bio']         as String?,   // ← nuevo
+              otherUserIsOnline:    extra['isOnline']    as bool? ?? false,
             );
           },
         ),

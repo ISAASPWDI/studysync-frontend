@@ -16,6 +16,11 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   final ApiService _api = ApiService();
   List<RecommendedUser> _users = [];
   bool _loading = true;
+  bool _loadingMore = false;
+  bool _hasMore = true;
+  int _offset = 0;
+  static const int _pageSize = 20;
+
   bool _swiping = false;
 
   late AnimationController _swipeCtrl;
@@ -43,7 +48,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
         vsync: this, duration: const Duration(milliseconds: 600));
     _matchAnim = CurvedAnimation(parent: _matchCtrl, curve: Curves.elasticOut);
 
-    _loadUsers();
+    _loadUsers(reset: true);
   }
 
   @override
@@ -53,16 +58,38 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     super.dispose();
   }
 
-  Future<void> _loadUsers() async {
-    setState(() => _loading = true);
-    try {
-      final users = await _api.getRecommendations(limit: 10);
+  /// Carga la primera página (reset=true) o la siguiente (reset=false)
+  Future<void> _loadUsers({bool reset = false}) async {
+    if (reset) {
       setState(() {
-        _users = users;
+        _loading = true;
+        _offset = 0;
+        _hasMore = true;
+        _users = [];
+      });
+    } else {
+      if (_loadingMore || !_hasMore) return;
+      setState(() => _loadingMore = true);
+    }
+
+    try {
+      final newUsers = await _api.getRecommendations(
+        limit: _pageSize,
+        offset: _offset,
+      );
+
+      setState(() {
+        _offset += newUsers.length;
+        if (newUsers.length < _pageSize) _hasMore = false;
+        _users.addAll(newUsers);
         _loading = false;
+        _loadingMore = false;
       });
     } catch (_) {
-      setState(() => _loading = false);
+      setState(() {
+        _loading = false;
+        _loadingMore = false;
+      });
     }
   }
 
@@ -114,6 +141,18 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       });
       _swipeCtrl.reset();
 
+      // Pre-cargar más perfiles cuando quedan pocos
+      if (_users.length <= 3 && _hasMore && !_loadingMore) {
+        _loadUsers();
+      }
+
+      // Si se agotaron completamente
+      if (_users.isEmpty && !_hasMore) {
+        // no hay más, se mostrará _EmptyWidget
+      } else if (_users.isEmpty) {
+        _loadUsers();
+      }
+
       try {
         final result = await _api.swipeAction(
           targetUserId: user.userId,
@@ -133,15 +172,13 @@ class _DiscoverScreenState extends State<DiscoverScreen>
           }
         }
       } catch (_) {}
-
-      if (_users.isEmpty) _loadUsers();
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FF),
+      backgroundColor: const Color(0xFFF0F3FF),
       body: Stack(
         children: [
           Column(
@@ -151,7 +188,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                 child: _loading
                     ? const _LoadingWidget()
                     : _users.isEmpty
-                    ? _EmptyWidget(onRefresh: _loadUsers)
+                    ? _EmptyWidget(onRefresh: () => _loadUsers(reset: true))
                     : _buildSwipeArea(),
               ),
             ],
@@ -206,7 +243,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
           IconButton(
             icon: const Icon(Icons.refresh_rounded,
                 color: Color(AppColors.primaryBlue), size: 22),
-            onPressed: _loadUsers,
+            onPressed: () => _loadUsers(reset: true),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
           ),
@@ -216,64 +253,116 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   }
 
   Widget _buildSwipeArea() {
-    return Column(
+    return Stack(
+      clipBehavior: Clip.none,
       children: [
-        Expanded(
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              if (_users.length > 2)
-                Positioned(
-                  top: 28, left: 28, right: 28, bottom: 0,
-                  child: _buildBackCard(scale: 0.91, opacity: 0.45),
-                ),
-              if (_users.length > 1)
-                Positioned(
-                  top: 14, left: 18, right: 18, bottom: 0,
-                  child: _buildBackCard(scale: 0.96, opacity: 0.7),
-                ),
-              AnimatedBuilder(
-                animation: _swipeCtrl,
-                builder: (_, __) {
-                  final offset = _swipeCtrl.isAnimating
-                      ? _swipeAnim.value
-                      : _dragOffset;
-                  final rotate = _swipeCtrl.isAnimating
-                      ? _rotateAnim.value
-                      : _dragOffset.dx / 500;
-                  return Positioned(
-                    top: 0, left: 0, right: 0, bottom: 0,
-                    child: Transform.translate(
-                      offset: offset,
-                      child: Transform.rotate(
-                        angle: rotate,
-                        child: GestureDetector(
-                          onPanUpdate: _onDragUpdate,
-                          onPanEnd: _onDragEnd,
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-                            child: Stack(
-                              children: [
-                                _buildMainCard(_users.first),
-                                if (_showLike)
-                                  _buildSwipeLabel('CONECTAR', Colors.green,
-                                      Alignment.topLeft),
-                                if (_showPass)
-                                  _buildSwipeLabel('PASAR', Colors.red,
-                                      Alignment.topRight),
-                              ],
-                            ),
-                          ),
-                        ),
+        // Back cards decorativas
+        if (_users.length > 2)
+          Positioned(
+            top: 16, left: 24, right: 24, bottom: 74,
+            child: _buildBackCard(scale: 0.93, opacity: 0.4),
+          ),
+        if (_users.length > 1)
+          Positioned(
+            top: 8, left: 14, right: 14, bottom: 74,
+            child: _buildBackCard(scale: 0.97, opacity: 0.7),
+          ),
+
+        // Card principal animada
+        AnimatedBuilder(
+          animation: _swipeCtrl,
+          builder: (_, __) {
+            final offset =
+            _swipeCtrl.isAnimating ? _swipeAnim.value : _dragOffset;
+            final rotate = _swipeCtrl.isAnimating
+                ? _rotateAnim.value
+                : _dragOffset.dx / 500;
+            return Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 74,
+              child: Transform.translate(
+                offset: offset,
+                child: Transform.rotate(
+                  angle: rotate,
+                  child: GestureDetector(
+                    onPanUpdate: _onDragUpdate,
+                    onPanEnd: _onDragEnd,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 4, 10, 0),
+                      child: Stack(
+                        children: [
+                          _buildMainCard(_users.first),
+                          if (_showLike)
+                            _buildSwipeLabel(
+                                'CONECTAR', Colors.green, Alignment.topLeft),
+                          if (_showPass)
+                            _buildSwipeLabel(
+                                'PASAR', Colors.red, Alignment.topRight),
+                        ],
                       ),
                     ),
-                  );
-                },
+                  ),
+                ),
               ),
-            ],
-          ),
+            );
+          },
         ),
-        _buildActionButtons(),
+
+        // Botones superpuestos — sin label
+        Positioned(
+          bottom: 10,
+          left: 0,
+          right: 0,
+          child: _buildActionButtons(),
+        ),
+
+        // Indicador de carga de más perfiles
+        if (_loadingMore)
+          Positioned(
+            bottom: 82,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.08),
+                      blurRadius: 8,
+                    )
+                  ],
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Color(AppColors.primaryBlue),
+                      ),
+                    ),
+                    SizedBox(width: 8),
+                    Text(
+                      'Cargando más perfiles...',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Color(AppColors.textSecondary),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -287,7 +376,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
         child: Container(
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(28),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.06),
@@ -305,30 +394,31 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(28),
         boxShadow: [
           BoxShadow(
-            color: const Color(AppColors.primaryBlue).withOpacity(0.12),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
+            color: const Color(AppColors.primaryBlue).withOpacity(0.14),
+            blurRadius: 28,
+            offset: const Offset(0, 10),
           ),
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withOpacity(0.05),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
         ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(28),
         child: SingleChildScrollView(
-          physics: const NeverScrollableScrollPhysics(),
+          physics: const BouncingScrollPhysics(),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildAvatarSection(user),
               _buildInfoSection(user),
               _buildDetailsSection(user),
+              const SizedBox(height: 24),
             ],
           ),
         ),
@@ -346,19 +436,9 @@ class _DiscoverScreenState extends State<DiscoverScreen>
 
     return Stack(
       children: [
-        Container(
-          height: 180,
+        SizedBox(
+          height: 240,
           width: double.infinity,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                const Color(AppColors.primaryBlue).withOpacity(0.13),
-                const Color(AppColors.primaryBlue).withOpacity(0.04),
-              ],
-            ),
-          ),
           child: user.avatarUrl != null && user.avatarUrl!.isNotEmpty
               ? Image.network(
             user.avatarUrl!,
@@ -369,7 +449,20 @@ class _DiscoverScreenState extends State<DiscoverScreen>
           )
               : _buildInitialAvatar(user),
         ),
-        // Badge compatibilidad — icono académico
+        // Gradiente suave al fondo de la foto
+        Positioned(
+          bottom: 0, left: 0, right: 0, height: 80,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.bottomCenter,
+                end: Alignment.topCenter,
+                colors: [Colors.white, Colors.white.withOpacity(0)],
+              ),
+            ),
+          ),
+        ),
+        // Badge compatibilidad
         Positioned(
           top: 14,
           right: 14,
@@ -404,14 +497,13 @@ class _DiscoverScreenState extends State<DiscoverScreen>
             ),
           ),
         ),
-        // Online badge
+        // Badge online — calculado desde el backend
         if (user.isOnline)
           Positioned(
             top: 14,
             left: 14,
             child: Container(
-              padding:
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
                 color: Colors.green.shade500,
                 borderRadius: BorderRadius.circular(20),
@@ -442,35 +534,38 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   }
 
   Widget _buildInitialAvatar(RecommendedUser user) {
-    return Center(
-      child: Container(
-        width: 84,
-        height: 84,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              const Color(AppColors.primaryBlue),
-              const Color(AppColors.primaryBlue).withOpacity(0.65),
+    return Container(
+      color: const Color(AppColors.primaryBlue).withOpacity(0.08),
+      child: Center(
+        child: Container(
+          width: 96,
+          height: 96,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                const Color(AppColors.primaryBlue),
+                const Color(AppColors.primaryBlue).withOpacity(0.65),
+              ],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(AppColors.primaryBlue).withOpacity(0.35),
+                blurRadius: 20,
+                offset: const Offset(0, 6),
+              ),
             ],
           ),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(AppColors.primaryBlue).withOpacity(0.35),
-              blurRadius: 20,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: Center(
-          child: Text(
-            user.name.isNotEmpty ? user.name[0].toUpperCase() : '?',
-            style: const TextStyle(
-              fontSize: 34,
-              color: Colors.white,
-              fontWeight: FontWeight.w800,
+          child: Center(
+            child: Text(
+              user.name.isNotEmpty ? user.name[0].toUpperCase() : '?',
+              style: const TextStyle(
+                fontSize: 38,
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
         ),
@@ -480,7 +575,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
 
   Widget _buildInfoSection(RecommendedUser user) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 13, 18, 0),
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -491,7 +586,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                 child: Text(
                   user.name,
                   style: const TextStyle(
-                    fontSize: 20,
+                    fontSize: 22,
                     fontWeight: FontWeight.w800,
                     color: Color(AppColors.textPrimary),
                     letterSpacing: -0.3,
@@ -502,8 +597,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
               ),
               if (user.showSemester && user.semester > 0)
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 9, vertical: 3),
+                  padding:
+                  const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
                   decoration: BoxDecoration(
                     color: const Color(0xFFEEF3FF),
                     borderRadius: BorderRadius.circular(10),
@@ -562,28 +657,12 @@ class _DiscoverScreenState extends State<DiscoverScreen>
               ),
             ),
           if (user.technicalSkills.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: user.technicalSkills.take(5).map((s) {
-                return Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: const Color(AppColors.chipBlue),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    s,
-                    style: const TextStyle(
-                      color: Color(AppColors.chipBlueText),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                );
-              }).toList(),
+            const SizedBox(height: 12),
+            _ExpandableChips(
+              items: user.technicalSkills,
+              maxVisible: 10,
+              chipColor: const Color(AppColors.chipBlue),
+              textColor: const Color(AppColors.chipBlueText),
             ),
           ],
         ],
@@ -601,7 +680,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     if (!hasDetails) return const SizedBox(height: 16);
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(18, 12, 18, 16),
+      margin: const EdgeInsets.fromLTRB(18, 12, 18, 0),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: const Color(0xFFF5F7FF),
@@ -613,16 +692,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
           if (user.bio != null && user.bio!.isNotEmpty) ...[
             _sectionLabel('Sobre mí'),
             const SizedBox(height: 5),
-            Text(
-              user.bio!,
-              style: const TextStyle(
-                color: Color(AppColors.textSecondary),
-                fontSize: 13,
-                height: 1.45,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
+            _ExpandableBio(bio: user.bio!, maxChars: 100),
             const SizedBox(height: 12),
           ],
           if (user.timeAvailability != 'No especificado' ||
@@ -657,56 +727,20 @@ class _DiscoverScreenState extends State<DiscoverScreen>
           if (user.interestAreas.isNotEmpty) ...[
             _sectionLabel('Intereses'),
             const SizedBox(height: 6),
-            Wrap(
-              spacing: 5,
-              runSpacing: 5,
-              children: user.interestAreas.take(4).map((i) {
-                return Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 9, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.purple.withOpacity(0.07),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                        color: Colors.purple.withOpacity(0.18), width: 1),
-                  ),
-                  child: Text(
-                    i,
-                    style: const TextStyle(
-                      color: Colors.purple,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                );
-              }).toList(),
+            _ExpandableChips(
+              items: user.interestAreas,
+              maxVisible: 6,
+              chipColor: Colors.purple.withOpacity(0.07),
+              textColor: Colors.purple,
+              borderColor: Colors.purple.withOpacity(0.18),
             ),
             const SizedBox(height: 10),
           ],
           if (user.objectives.isNotEmpty) ...[
             _sectionLabel('Objetivos'),
             const SizedBox(height: 6),
-            ...user.objectives.take(3).map((o) => Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(
-                children: [
-                  Icon(Icons.check_circle_rounded,
-                      size: 13,
-                      color: const Color(AppColors.primaryBlue)
-                          .withOpacity(0.8)),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      o,
-                      style: const TextStyle(
-                        color: Color(AppColors.textSecondary),
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            )),
+            _ExpandableObjectives(
+                objectives: user.objectives, maxVisible: 6),
           ],
         ],
       ),
@@ -754,8 +788,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     );
   }
 
-  Widget _buildSwipeLabel(
-      String text, Color color, Alignment alignment) {
+  Widget _buildSwipeLabel(String text, Color color, Alignment alignment) {
     return Align(
       alignment: alignment,
       child: Padding(
@@ -763,8 +796,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
         child: Transform.rotate(
           angle: alignment == Alignment.topLeft ? -0.25 : 0.25,
           child: Container(
-            padding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
             decoration: BoxDecoration(
               border: Border.all(color: color, width: 3),
               borderRadius: BorderRadius.circular(8),
@@ -785,28 +817,25 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     );
   }
 
+  /// Botones sin label, solo íconos circulares
   Widget _buildActionButtons() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(40, 10, 40, 24),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _ActionBtn(
-            icon: Icons.close_rounded,
-            color: Colors.red.shade400,
-            size: 64,
-            label: 'Pasar',
-            onTap: () => _animateSwipe(false),
-          ),
-          _ActionBtn(
-            icon: Icons.menu_book_rounded,
-            color: const Color(AppColors.primaryBlue),
-            size: 72,
-            label: 'Conectar',
-            onTap: () => _animateSwipe(true),
-          ),
-        ],
-      ),
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        _ActionBtn(
+          icon: Icons.close_rounded,
+          color: Colors.red.shade400,
+          size: 62,
+          onTap: () => _animateSwipe(false),
+        ),
+        const SizedBox(width: 36),
+        _ActionBtn(
+          icon: Icons.menu_book_rounded,
+          color: const Color(AppColors.primaryBlue),
+          size: 70,
+          onTap: () => _animateSwipe(true),
+        ),
+      ],
     );
   }
 
@@ -829,7 +858,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                 borderRadius: BorderRadius.circular(28),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(AppColors.primaryBlue).withOpacity(0.3),
+                    color:
+                    const Color(AppColors.primaryBlue).withOpacity(0.3),
                     blurRadius: 40,
                     offset: const Offset(0, 12),
                   ),
@@ -905,18 +935,193 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   }
 }
 
+// ── Bio expandible ────────────────────────────────────────────────────────────
+class _ExpandableBio extends StatefulWidget {
+  final String bio;
+  final int maxChars;
+  const _ExpandableBio({required this.bio, required this.maxChars});
+
+  @override
+  State<_ExpandableBio> createState() => _ExpandableBioState();
+}
+
+class _ExpandableBioState extends State<_ExpandableBio> {
+  bool _expanded = false;
+  @override
+  Widget build(BuildContext context) {
+    final isLong = widget.bio.length > widget.maxChars;
+    final displayText = (!_expanded && isLong)
+        ? '${widget.bio.substring(0, widget.maxChars)}...'
+        : widget.bio;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(displayText,
+            style: const TextStyle(
+                color: Color(AppColors.textSecondary),
+                fontSize: 13,
+                height: 1.45)),
+        if (isLong)
+          GestureDetector(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(
+                _expanded ? 'Ver menos' : 'Ver más',
+                style: const TextStyle(
+                    color: Color(AppColors.primaryBlue),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+// ── Chips expandibles ─────────────────────────────────────────────────────────
+class _ExpandableChips extends StatefulWidget {
+  final List<String> items;
+  final int maxVisible;
+  final Color chipColor;
+  final Color textColor;
+  final Color? borderColor;
+  const _ExpandableChips({
+    required this.items,
+    required this.maxVisible,
+    required this.chipColor,
+    required this.textColor,
+    this.borderColor,
+  });
+
+  @override
+  State<_ExpandableChips> createState() => _ExpandableChipsState();
+}
+
+class _ExpandableChipsState extends State<_ExpandableChips> {
+  bool _expanded = false;
+  @override
+  Widget build(BuildContext context) {
+    final isLong = widget.items.length > widget.maxVisible;
+    final visible = (!_expanded && isLong)
+        ? widget.items.take(widget.maxVisible).toList()
+        : widget.items;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: visible.map((s) {
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: widget.chipColor,
+                borderRadius: BorderRadius.circular(10),
+                border: widget.borderColor != null
+                    ? Border.all(color: widget.borderColor!, width: 1)
+                    : null,
+              ),
+              child: Text(s,
+                  style: TextStyle(
+                      color: widget.textColor,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600)),
+            );
+          }).toList(),
+        ),
+        if (isLong) ...[
+          const SizedBox(height: 5),
+          GestureDetector(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Text(
+              _expanded
+                  ? 'Ver menos'
+                  : '+ ${widget.items.length - widget.maxVisible} más',
+              style: const TextStyle(
+                  color: Color(AppColors.primaryBlue),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+// ── Objetivos expandibles ─────────────────────────────────────────────────────
+class _ExpandableObjectives extends StatefulWidget {
+  final List<String> objectives;
+  final int maxVisible;
+  const _ExpandableObjectives(
+      {required this.objectives, required this.maxVisible});
+
+  @override
+  State<_ExpandableObjectives> createState() => _ExpandableObjectivesState();
+}
+
+class _ExpandableObjectivesState extends State<_ExpandableObjectives> {
+  bool _expanded = false;
+  @override
+  Widget build(BuildContext context) {
+    final isLong = widget.objectives.length > widget.maxVisible;
+    final visible = (!_expanded && isLong)
+        ? widget.objectives.take(widget.maxVisible).toList()
+        : widget.objectives;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ...visible.map((o) => Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Row(
+            children: [
+              Icon(Icons.check_circle_rounded,
+                  size: 13,
+                  color:
+                  const Color(AppColors.primaryBlue).withOpacity(0.8)),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(o,
+                    style: const TextStyle(
+                        color: Color(AppColors.textSecondary),
+                        fontSize: 12)),
+              ),
+            ],
+          ),
+        )),
+        if (isLong) ...[
+          const SizedBox(height: 2),
+          GestureDetector(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Text(
+              _expanded
+                  ? 'Ver menos'
+                  : '+ ${widget.objectives.length - widget.maxVisible} más',
+              style: const TextStyle(
+                  color: Color(AppColors.primaryBlue),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+// ── Botón circular sin label ──────────────────────────────────────────────────
 class _ActionBtn extends StatelessWidget {
   final IconData icon;
   final Color color;
   final double size;
-  final String label;
   final VoidCallback onTap;
 
   const _ActionBtn({
     required this.icon,
     required this.color,
     required this.size,
-    required this.label,
     required this.onTap,
   });
 
@@ -924,41 +1129,28 @@ class _ActionBtn extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: size,
-            height: size,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: color.withOpacity(0.25),
-                  blurRadius: 16,
-                  offset: const Offset(0, 5),
-                ),
-              ],
-              border: Border.all(color: color.withOpacity(0.22), width: 1.5),
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: color.withOpacity(0.3),
+              blurRadius: 20,
+              offset: const Offset(0, 6),
             ),
-            child: Icon(icon, color: color, size: size * 0.44),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
+          ],
+          border: Border.all(color: color.withOpacity(0.25), width: 1.5),
+        ),
+        child: Icon(icon, color: color, size: size * 0.44),
       ),
     );
   }
 }
 
+// ── Loading ───────────────────────────────────────────────────────────────────
 class _LoadingWidget extends StatelessWidget {
   const _LoadingWidget();
   @override
@@ -976,20 +1168,18 @@ class _LoadingWidget extends StatelessWidget {
             ),
           ),
           SizedBox(height: 20),
-          Text(
-            'Buscando compañeros...',
-            style: TextStyle(
-              color: Color(AppColors.textSecondary),
-              fontSize: 15,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
+          Text('Buscando compañeros...',
+              style: TextStyle(
+                  color: Color(AppColors.textSecondary),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500)),
         ],
       ),
     );
   }
 }
 
+// ── Empty state ───────────────────────────────────────────────────────────────
 class _EmptyWidget extends StatelessWidget {
   final VoidCallback onRefresh;
   const _EmptyWidget({required this.onRefresh});
@@ -1008,30 +1198,23 @@ class _EmptyWidget extends StatelessWidget {
                 color: const Color(AppColors.primaryBlue).withOpacity(0.08),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
-                Icons.people_outline_rounded,
-                size: 42,
-                color: Color(AppColors.primaryBlue),
-              ),
+              child: const Icon(Icons.people_outline_rounded,
+                  size: 42, color: Color(AppColors.primaryBlue)),
             ),
             const SizedBox(height: 20),
-            const Text(
-              'Sin perfiles por ahora',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-                color: Color(AppColors.textPrimary),
-              ),
-            ),
+            const Text('Sin perfiles por ahora',
+                style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: Color(AppColors.textPrimary))),
             const SizedBox(height: 8),
             const Text(
               'Vuelve más tarde para ver nuevos compañeros de estudio',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Color(AppColors.textSecondary),
-                fontSize: 13,
-                height: 1.5,
-              ),
+                  color: Color(AppColors.textSecondary),
+                  fontSize: 13,
+                  height: 1.5),
             ),
             const SizedBox(height: 28),
             ElevatedButton.icon(
@@ -1042,8 +1225,8 @@ class _EmptyWidget extends StatelessWidget {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(AppColors.primaryBlue),
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 28, vertical: 13),
+                padding:
+                const EdgeInsets.symmetric(horizontal: 28, vertical: 13),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14)),
                 elevation: 0,

@@ -1,0 +1,25 @@
+# Archivos específicos de Flutter
+.metadata
+.dart_tool/
+build/
+*.lock
+
+# Archivos de plataforma (NO subir a GitHub)
+android/
+ios/
+linux/
+macos/
+windows/
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+*.log
+
+# Archivos de editor
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~

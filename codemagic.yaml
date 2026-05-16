@@ -1,32 +1,38 @@
 workflows:
-  ios-no-codesign:
-    name: iOS No Codesign
-    max_build_duration: 60
-    instance_type: mac_mini_m2
-
+  ios-workflow:
+    name: iOS Build con Firma
     environment:
       flutter: stable
       xcode: latest
-      cocoapods: default
-
+    integrations:
+      app_store_connect: "Codemagic"  # Conecta con tu Apple Developer
     scripts:
-      - name: Get packages
+      - name: Obtener dependencias
         script: flutter pub get
-
-      - name: Pod install
+      
+      - name: Instalar pods
+        script: cd ios && pod install
+      
+      - name: Configurar llavero
+        script: keychain initialize
+      
+      - name: Obtener certificados de Apple
         script: |
-          cd ios && pod install
-
-      - name: Build iOS no codesign
+          app-store-connect fetch-signing-files "$(xcode-project detect-bundle-id)" \
+            --type IOS_APP_DEVELOPMENT \
+            --create
+      
+      - name: Añadir certificados al llavero
+        script: keychain add-certificates
+      
+      - name: Configurar firma en proyecto
+        script: xcode-project use-profiles
+      
+      - name: Construir IPA firmado
         script: |
-          flutter build ios --release --no-codesign
-
-      - name: Package IPA
-        script: |
-          cd build/ios/iphoneos
-          mkdir Payload
-          cp -r Runner.app Payload/
-          zip -r StudySync.ipa Payload/
-
+          flutter build ipa \
+            --release \
+            --export-options-plist=/tmp/exportOptions.plist
+      
     artifacts:
-      - build/ios/iphoneos/StudySync.ipa
+      - build/ios/ipa/*.ipa
